@@ -1,30 +1,61 @@
+require('dotenv').config(); // Load environment variables
+
 const express = require('express');
+const mongoose = require('mongoose');
 const http = require('http');
 const { Server } = require('socket.io');
-const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
-
 const noteRoutes = require('./routes/notes');
-const socketHandler = require('./sockets/sockethandler');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*', // Allow from all origins (adjust in production)
+    methods: ['GET', 'POST'],
+  },
+});
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 app.use('/api/notes', noteRoutes);
 
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' },
+// MongoDB Connection
+mongoose
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch((err) => console.error('❌ MongoDB connection error:', err));
+
+// Socket.io Logic
+io.on('connection', (socket) => {
+  console.log('🔗 New client connected:', socket.id);
+
+  socket.on('join-room', ({ roomId, username }) => {
+    socket.join(roomId);
+    console.log(`${username} joined room: ${roomId}`);
+
+    // Notify others
+    socket.to(roomId).emit('user-joined', { username });
+
+    // Handle note updates
+    socket.on('note-update', (updatedContent) => {
+      socket.to(roomId).emit('note-update', updatedContent);
+    });
+
+    // Handle disconnect
+    socket.on('disconnect', () => {
+      socket.to(roomId).emit('user-left', { username });
+      console.log(`${username} disconnected from room: ${roomId}`);
+    });
+  });
 });
 
-// Import Socket Logic
-socketHandler(io);
-
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => {
-    console.log('MongoDB Connected');
-    server.listen(5000, () => console.log('Server running on port 5000'));
-  })
-  .catch(err => console.log(err));
+// Start Server
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
